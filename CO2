@@ -1,0 +1,197 @@
+library(circlize)
+library(dplyr)
+library(RColorBrewer)
+library(grid)
+library(ComplexHeatmap)
+library(readxl)
+
+# 设置字体为 Times New Roman
+windowsFonts(Times=windowsFont("Times New Roman"))
+par(family = "Times")
+
+# 设置文件路径
+file_path <- "G:/碳排放/多目标/数据/contrast_foreNSGA.xlsx"
+
+# 读取数据
+forecast_data <- read_excel(file_path, sheet = "forecast_2025")
+nsga_data <- read_excel(file_path, sheet = "NSGA_2025")
+
+# 合并数据
+data <- data.frame(
+  Region = forecast_data$Region,
+  Forecast = forecast_data$`Coal (10k tce)`,
+  NSGA = nsga_data$`Coal (10k tce)`
+)
+
+# 按预测数据升序排列
+data <- data %>%
+  arrange(Forecast) %>%
+  mutate(Region = factor(Region, levels = unique(Region)))
+
+# 计算y轴范围
+y_min <- floor(min(c(data$Forecast, data$NSGA), na.rm = TRUE) * 0.9)
+y_max <- ceiling(max(c(data$Forecast, data$NSGA), na.rm = TRUE) * 1.1)
+
+# 定义颜色映射函数
+create_transparent_colors <- function(colors, alpha = 0.7) {
+  sapply(colors, function(col) adjustcolor(col, alpha.f = alpha))
+}
+
+col_fun <- colorRamp2(
+  breaks = seq(min(data$Forecast), max(data$Forecast), length.out = 11),
+  colors = brewer.pal(11, "Blues")
+)
+
+col_fun_transparent <- function(values, alpha = 0.7) {
+  base_colors <- col_fun(values)
+  create_transparent_colors(base_colors, alpha)
+}
+
+# 清空之前的circlize设置
+circos.clear()
+
+# 设置环形图参数（轨道左移）
+circos.par(
+  gap.after = c(rep(2, nrow(data)-1), 25),# 最后一个扇区与第一个间隔15度
+  track.margin = c(0.02, 0.1),
+  start.degree = 0,
+  cell.padding = c(0.01, 0.01, 0.01, 0.01),
+  canvas.xlim = c(-1, 1.2),
+  canvas.ylim = c(-1, 1.2)
+)
+
+# 初始化环形图
+circos.initialize(factors = data$Region, xlim = c(0, 1.5))
+
+# 绘制环形图轨道
+circos.trackPlotRegion(
+  factors = data$Region,
+  ylim = c(y_min, y_max),
+  bg.border = NA,
+  track.height = 0.6,
+  panel.fun = function(x, y) {
+    sector.index <- get.cell.meta.data("sector.index")
+    i <- which(data$Region == sector.index)
+
+    # 绘制预测数据柱状图
+    circos.rect(
+      xleft = 0, ybottom = 0, xright = 1.5, ytop = data$Forecast[i],
+      col = col_fun_transparent(data$Forecast[i]),
+      border = col_fun_transparent(data$Forecast[i])
+    )
+
+    # 绘制多目标规划数据柱状图
+    circos.rect(
+      xleft = 0, ybottom = 0, xright = 1.5, ytop = data$NSGA[i],
+      col = adjustcolor("gray", alpha.f = 0.6),
+      border = adjustcolor("gray", alpha.f = 0.6)
+    )
+
+    # 省份名称
+    max_height <- max(data$Forecast[i], data$NSGA[i])
+    text_position <- max_height + (y_max - y_min) * 0.05
+    if (text_position > y_max) text_position <- y_max
+
+    circos.text(
+      x = 0.75,
+      y = text_position,
+      labels = sector.index,
+      facing = "clockwise", niceFacing = TRUE, adj = c(0, 0.5),
+      cex = 0.6, col = "black",
+      family = "Times"
+    )
+
+    # 只在第一个扇区绘制y轴
+    if (sector.index == levels(data$Region)[1]) { # 判断是否为第一个扇区
+      circos.yaxis(
+        side = "left",                   # 轴的方向，'left' 是径向向内，'right' 是径向向外
+        sector.index = sector.index,     # 指定在哪个扇区
+        track.index = get.cell.meta.data("track.index"), # 当前轨道
+        at = seq(floor(y_min), floor(y_max), by = (floor(y_max) - floor(y_min))/5), # 刻度位置，根据你的数据调整
+        labels.cex = 0.6,                # 刻度标签字体大小
+      )
+      # 计算标签位置（在最高刻度上方）
+      y_ticks <- pretty(c(y_min, y_max))
+      label_y <- max(y_ticks) + (y_max - y_min) * 0.07
+      # 添加标签
+      circos.text(
+        x = 0,  # 在扇区的最左侧
+        y = label_y,
+        labels = "10ktce",
+        sector.index = sector.index,
+        track.index = get.cell.meta.data("track.index"),
+        facing = "inside",
+        adj = c(0.5, 0.5),
+        cex = 0.7,
+        col = "black",
+        frontfamily = "Times"
+      )
+    }
+  }
+)
+
+# 添加标题
+title(
+  main = expression("Coal (2025)"),
+  cex.main = 1.2,
+  line = -2,
+  family = "Times",  # 使用衬线字体
+  font.main = 2
+)
+
+# 7. 创建图例（关键：明确所有参数名，避免歧义）
+# 7.1 预测数据图例（lgd1）
+lgd1 <- Legend(
+  at = round(seq(min(data$Forecast), max(data$Forecast), length.out = 5), 1),  # 颜色刻度
+  col_fun = col_fun,  # 颜色映射函数
+  title = "Prediction (10kt)",  # 图例标题
+  title_position = "leftcenter-rot",  # 标题位置（左侧垂直）
+  border = FALSE,  # 显示图例边框
+  legend_height = unit(4, "cm"),  # 图例高度
+  grid_width = unit(5, "mm"),     # 颜色块宽度
+  title_gp = gpar(  # 标题样式
+    fontsize = 10,
+    fontfamily = "Times"
+  ),
+  labels_gp = gpar(  # 刻度标签样式
+    fontsize = 9,
+    fontfamily = "Times"
+  ),
+  direction = "vertical"  # 图例方向（垂直）
+)
+
+# 7.2 多目标规划（MOP）图例（lgd2：核心修正，明确所有参数名）
+lgd2 <- Legend(
+  labels = "DCNSGA-II",
+  type = "points",
+  pch = 15,
+  legend_gp = gpar(
+    col = adjustcolor("gray", alpha.f = 0.7),  # 边框颜色，如果需要边框可以设置，如果不需要可以设为NA
+    fill = adjustcolor("gray", alpha.f = 0.7)   # 填充颜色
+  ),
+  size = unit(5, "mm"),
+  labels_gp = gpar(
+    fontsize = 10,
+    fontfamily = "Times"
+  )
+)
+
+# 7.3 分别绘制两个图例（不再组合，分别指定位置）
+# 左侧图例（预测数据）
+draw(
+  lgd1,
+  x = unit(0.25, "npc"),  # x位置（画布15%处，左侧）
+  y = unit(0.5, "npc"),   # y位置（画布50%处，居中）
+  just = "center"         # 对齐方式（中心对齐）
+)
+
+# 右侧图例（MOP）
+draw(
+  lgd2,
+  x = unit(0.8, "npc"),  # x位置（画布85%处，右侧）
+  y = unit(0.5, "npc"),   # y位置（画布50%处，居中）
+  just = "center"         # 对齐方式（中心对齐）
+)
+
+# 8. 清理circlize设置
+circos.clear()
